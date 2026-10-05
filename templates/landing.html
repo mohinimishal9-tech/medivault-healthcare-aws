@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediVault: secure healthcare data on AWS</title>
+  <meta name="description" content="Healthcare data platform that encrypts patient records with AWS KMS, controls access with IAM, and audits every action with CloudTrail and Config.">
+  <meta name="csrf" content="{{ csrf_token() }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="MediVault home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#123B34"/><circle cx="16" cy="13" r="5" fill="#E3A93B"/><path d="M14.2 16.5h3.6l1.2 8h-6z" fill="#E3A93B"/></svg>
+      MediVault
+    </a>
+    <nav class="site-nav" aria-label="Page sections">
+      <a href="#how">How it works</a>
+      <a href="#services">AWS services</a>
+      <a href="#access">Who sees what</a>
+      <a class="btn small" href="{{ url_for('login') }}">Sign in</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <h1>Patient records, locked before they reach the database.</h1>
+        <p class="lede">MediVault encrypts each sensitive field with its own AWS KMS data key, lets IAM decide who can decrypt it, and records every access in an audit trail.</p>
+        <div class="cta">
+          <a class="btn amber" href="{{ url_for('login') }}">Open the dashboard</a>
+          <a class="btn ghost" href="#try">Try the encryption</a>
+        </div>
+      </div>
+      <div class="cipher" id="try">
+        <label for="plain">Type a patient detail</label>
+        <input id="plain" maxlength="120" value="Asha Verma, 41, hypertension" autocomplete="off" spellcheck="false">
+        <dl aria-live="polite">
+          <div><dt>What Aurora stores</dt><dd class="mono ct" id="out-ct">…</dd></div>
+          <div><dt>Encrypted data key (only KMS can open it)</dt><dd class="mono" id="out-edk">…</dd></div>
+          <div><dt>KMS key</dt><dd class="mono" id="out-kid">…</dd></div>
+        </dl>
+        <p class="note" id="out-note">Each change asks KMS for a new data key, so the same text never produces the same ciphertext.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band tint" id="how">
+    <div class="wrap">
+      <h2>What happens to one patient record</h2>
+      <p class="sub">From the moment a nurse saves a registration to the moment a doctor opens it.</p>
+      <ol class="steps">
+        <li><h3>A signed-in user submits the record</h3><p>The app checks the user's IAM role before anything is written.</p></li>
+        <li><h3>KMS issues a one-time data key</h3><p>A new 256-bit key is generated under the customer managed key. Only its encrypted copy is kept.</p></li>
+        <li><h3>Sensitive fields are encrypted</h3><p>Name, ID number, phone, address and notes are sealed with AES-256-GCM. Age, gender and diagnosis stay readable for analytics.</p></li>
+        <li><h3>Aurora and S3 store only ciphertext</h3><p>Structured data goes to Aurora. Scans and lab reports go to S3 with SSE-KMS.</p></li>
+        <li><h3>CloudTrail and Config keep watching</h3><p>Every decrypt is logged, and Config rules flag any setting that drifts out of policy.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band" id="services">
+    <div class="wrap">
+      <h2>Six AWS services, one job each</h2>
+      <dl class="services">
+        <div><dt>Amazon Aurora</dt><dd>Stores patient and admission records in an encrypted cluster inside private subnets.</dd></div>
+        <div><dt>Amazon S3</dt><dd>Holds lab reports and scans. Versioned, encrypted, and blocked from public access.</dd></div>
+        <div><dt>AWS KMS</dt><dd>Owns the master key and rotates it every year. Each decrypt needs a permitted role.</dd></div>
+        <div><dt>AWS IAM</dt><dd>Gives each role the least access it needs. Administrators cannot decrypt patient data.</dd></div>
+        <div><dt>AWS Config</dt><dd>Checks seven security rules continuously and flags anything out of compliance.</dd></div>
+        <div><dt>AWS CloudTrail</dt><dd>Records who called which API, from where, and whether it was allowed.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="band tint" id="access">
+    <div class="wrap">
+      <h2>Who sees what</h2>
+      <p class="sub">Access follows the job. The same rules are enforced in the app and in the IAM policies.</p>
+      <div class="table-scroll">
+        <table class="matrix">
+          <caption>Access by role</caption>
+          <thead><tr><th scope="col">Role</th><th scope="col">Patient identity</th><th scope="col">Clinical notes</th><th scope="col">Files in S3</th><th scope="col">Analytics</th><th scope="col">Audit and compliance</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Doctor</th><td class="yes">Full</td><td class="yes">Yes</td><td class="yes">Upload and download</td><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th scope="row">Nurse</th><td>Name, masked ID</td><td class="no">No</td><td>Upload only</td><td class="no">No</td><td class="no">No</td></tr>
+            <tr><th scope="row">Data analyst</th><td class="no">De-identified rows</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td><td class="no">No</td></tr>
+            <tr><th scope="row">Compliance auditor</th><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="yes">Read only</td></tr>
+            <tr><th scope="row">Administrator</th><td class="no">De-identified rows</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td><td class="yes">Manage</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <div>
+        <h2>See it running with synthetic patients.</h2>
+        <p>Sign in as any of five roles and compare what each one can open.</p>
+      </div>
+      <a class="btn amber" href="{{ url_for('login') }}">Open the dashboard</a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot"><div class="wrap">MediVault is a class project. All patient data shown is synthetic.</div></footer>
+<script src="{{ url_for('static', filename='js/landing.js') }}"></script>
+</body>
+</html>

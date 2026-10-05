@@ -1,0 +1,426 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  MediVault - secure healthcare data platform. Creates a KMS key, encrypted S3 buckets,
+  an encrypted Aurora MySQL cluster, least-privilege IAM roles, CloudTrail and AWS Config rules.
+  Class-project sizing: small instance, no deletion protection. Delete the stack when finished.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for the Aurora cluster (the default VPC works for a class project)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Two or more subnets in different Availability Zones
+  AppCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR range allowed to reach Aurora on port 3306 (your app servers or your VPC range)
+  Prefix:
+    Type: String
+    Default: medivault
+    AllowedPattern: "[a-z0-9-]+"
+    Description: Lowercase name prefix used for resources
+  CreateConfigRecorder:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set to false if AWS Config is already recording in this region (only one recorder is allowed)
+
+Conditions:
+  MakeRecorder: !Equals [!Ref CreateConfigRecorder, "true"]
+
+Resources:
+  # ------------------------------------------------------------------ KMS
+  PhiKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: MediVault customer managed key for patient data
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdminsManageKeyButCannotUseIt
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+              - kms:TagResource
+              - kms:UntagResource
+            Resource: "*"
+          - Sid: AllowIamPoliciesToGrantUse
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: [kms:Decrypt, kms:GenerateDataKey*, kms:Encrypt, kms:ReEncrypt*, kms:DescribeKey]
+            Resource: "*"
+          - Sid: AllowCloudTrailToEncryptLogs
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: [kms:GenerateDataKey*, kms:DescribeKey]
+            Resource: "*"
+  PhiKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${Prefix}-phi"
+      TargetKeyId: !Ref PhiKey
+
+  # ------------------------------------------------------------------ S3
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${Prefix}-phi-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !GetAtt PhiKey.Arn
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RequireTls
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+          - Sid: RequireKmsEncryptionOnUpload
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource: !Sub "${DataBucket.Arn}/*"
+            Condition: { StringNotEquals: { "s3:x-amz-server-side-encryption": "aws:kms" } }
+
+  LogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${Prefix}-logs-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration: { Status: Enabled }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+  LogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RequireTls
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt LogBucket.Arn, !Sub "${LogBucket.Arn}/*"]
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+          - Sid: CloudTrailAclCheck
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt LogBucket.Arn
+          - Sid: CloudTrailWrite
+            Effect: Allow
+            Principal: { Service: cloudtrail.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub "${LogBucket.Arn}/trail/AWSLogs/${AWS::AccountId}/*"
+            Condition: { StringEquals: { "s3:x-amz-acl": bucket-owner-full-control } }
+          - Sid: ConfigAclCheck
+            Effect: Allow
+            Principal: { Service: config.amazonaws.com }
+            Action: [s3:GetBucketAcl, s3:ListBucket]
+            Resource: !GetAtt LogBucket.Arn
+          - Sid: ConfigWrite
+            Effect: Allow
+            Principal: { Service: config.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub "${LogBucket.Arn}/config/AWSLogs/${AWS::AccountId}/*"
+            Condition: { StringEquals: { "s3:x-amz-acl": bucket-owner-full-control } }
+
+  # ------------------------------------------------------------------ Aurora
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: MediVault Aurora subnets
+      SubnetIds: !Ref SubnetIds
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora access from the application network only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 3306, ToPort: 3306, CidrIp: !Ref AppCidr, Description: App access }
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: aurora-mysql
+      DatabaseName: medivault
+      MasterUsername: admin
+      ManageMasterUserPassword: true
+      MasterUserSecret: { KmsKeyId: !Ref PhiKey }
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt PhiKey.Arn
+      EnableIAMDatabaseAuthentication: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds: [!Ref DbSecurityGroup]
+      EnableCloudwatchLogsExports: [audit, error]
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref AuroraCluster
+      Engine: aurora-mysql
+      DBInstanceClass: db.t3.medium
+      PubliclyAccessible: false
+
+  # ------------------------------------------------------------------ IAM roles (least privilege)
+  DoctorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-doctor"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } }
+      Policies:
+        - PolicyName: clinical-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: [kms:Decrypt, kms:GenerateDataKey], Resource: !GetAtt PhiKey.Arn }
+              - { Effect: Allow, Action: [s3:PutObject, s3:GetObject], Resource: !Sub "${DataBucket.Arn}/patients/*" }
+              - { Effect: Allow, Action: "rds-db:connect", Resource: !Sub "arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${AuroraCluster.DBClusterResourceId}/medivault_doctor" }
+  NurseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-nurse"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } }
+      Policies:
+        - PolicyName: nursing-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: [kms:Decrypt, kms:GenerateDataKey], Resource: !GetAtt PhiKey.Arn }
+              - { Effect: Allow, Action: s3:PutObject, Resource: !Sub "${DataBucket.Arn}/patients/*" }
+              - { Effect: Allow, Action: "rds-db:connect", Resource: !Sub "arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${AuroraCluster.DBClusterResourceId}/medivault_nurse" }
+  AnalystRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-analyst"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } }
+      Policies:
+        - PolicyName: deidentified-analytics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: "rds-db:connect", Resource: !Sub "arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${AuroraCluster.DBClusterResourceId}/medivault_analyst" }
+  AuditorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-auditor"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } }
+      Policies:
+        - PolicyName: read-audit-and-config
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [cloudtrail:LookupEvents, "config:Describe*", config:GetComplianceDetailsByConfigRule, "iam:Get*", "iam:List*"]
+                Resource: "*"
+  AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-admin"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: sts:AssumeRole
+            Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } }
+      Policies:
+        - PolicyName: run-platform-never-read-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ["config:Describe*", config:StartConfigRulesEvaluation, cloudtrail:LookupEvents, "iam:Get*", "iam:List*"]
+                Resource: "*"
+              - Effect: Deny
+                Action: [kms:Decrypt, s3:GetObject, "rds-db:connect"]
+                Resource: "*"
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Prefix}-app"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: [ec2.amazonaws.com, ecs-tasks.amazonaws.com] }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: app-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: [kms:Decrypt, kms:GenerateDataKey, kms:DescribeKey], Resource: !GetAtt PhiKey.Arn }
+              - { Effect: Allow, Action: [s3:PutObject, s3:GetObject], Resource: !Sub "${DataBucket.Arn}/patients/*" }
+              - { Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!cluster-*" }
+              - { Effect: Allow, Action: [cloudtrail:LookupEvents, "config:Describe*", config:GetComplianceDetailsByConfigRule, config:StartConfigRulesEvaluation], Resource: "*" }
+
+  # ------------------------------------------------------------------ CloudTrail
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: LogBucketPolicy
+    Properties:
+      TrailName: !Sub "${Prefix}-trail"
+      S3BucketName: !Ref LogBucket
+      S3KeyPrefix: trail
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      KMSKeyId: !GetAtt PhiKey.Arn
+      EventSelectors:
+        - ReadWriteType: All
+          IncludeManagementEvents: true
+          DataResources:
+            - Type: AWS::S3::Object
+              Values: [!Sub "${DataBucket.Arn}/"]
+
+  # ------------------------------------------------------------------ AWS Config
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Condition: MakeRecorder
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: config.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"]
+      Policies:
+        - PolicyName: deliver-config-snapshots
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: s3:PutObject, Resource: !Sub "${LogBucket.Arn}/config/AWSLogs/${AWS::AccountId}/*" }
+              - { Effect: Allow, Action: s3:GetBucketAcl, Resource: !GetAtt LogBucket.Arn }
+  ConfigRecorder:
+    Type: AWS::Config::ConfigurationRecorder
+    Condition: MakeRecorder
+    Properties:
+      Name: default
+      RoleARN: !GetAtt ConfigRole.Arn
+      RecordingGroup: { AllSupported: true, IncludeGlobalResourceTypes: true }
+  ConfigDelivery:
+    Type: AWS::Config::DeliveryChannel
+    Condition: MakeRecorder
+    Properties:
+      Name: default
+      S3BucketName: !Ref LogBucket
+      S3KeyPrefix: config
+
+  RuleKeyRotation:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-cmk-backing-key-rotation-enabled"
+      Source: { Owner: AWS, SourceIdentifier: CMK_BACKING_KEY_ROTATION_ENABLED }
+  RuleS3Sse:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-s3-bucket-server-side-encryption-enabled"
+      Source: { Owner: AWS, SourceIdentifier: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED }
+  RuleS3Public:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-s3-bucket-public-read-prohibited"
+      Source: { Owner: AWS, SourceIdentifier: S3_BUCKET_PUBLIC_READ_PROHIBITED }
+  RuleS3Versioning:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-s3-bucket-versioning-enabled"
+      Source: { Owner: AWS, SourceIdentifier: S3_BUCKET_VERSIONING_ENABLED }
+  RuleRdsEncrypted:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-rds-storage-encrypted"
+      Source: { Owner: AWS, SourceIdentifier: RDS_STORAGE_ENCRYPTED }
+  RuleCloudTrail:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-cloud-trail-enabled"
+      Source: { Owner: AWS, SourceIdentifier: CLOUD_TRAIL_ENABLED }
+  RuleMfa:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: !Sub "${Prefix}-iam-user-mfa-enabled"
+      Source: { Owner: AWS, SourceIdentifier: IAM_USER_MFA_ENABLED }
+
+Outputs:
+  KmsKeyId:
+    Value: !Ref PhiKey
+    Description: Set as MEDIVAULT_KMS_KEY_ID
+  DataBucketName:
+    Value: !Ref DataBucket
+    Description: Set as MEDIVAULT_S3_BUCKET
+  AuroraEndpoint:
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Description: Set as MEDIVAULT_DB_HOST
+  AuroraSecretArn:
+    Value: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
+    Description: Set as MEDIVAULT_DB_SECRET_ARN
+  ConfigRulePrefix:
+    Value: !Sub "${Prefix}-"
+    Description: Set as MEDIVAULT_CONFIG_PREFIX

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · MediVault</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="login-page">
+  <aside class="login-side">
+    <a class="brand" href="/" style="color:#fff">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1B5247"/><circle cx="16" cy="13" r="5" fill="#E3A93B"/><path d="M14.2 16.5h3.6l1.2 8h-6z" fill="#E3A93B"/></svg>
+      MediVault
+    </a>
+    <div>
+      <h2>Every role sees only what its job needs.</h2>
+      <p>Sign in with a different role to see how the dashboard changes, and how each attempt shows up in the audit trail.</p>
+    </div>
+    <p>Synthetic data only.</p>
+  </aside>
+  <main class="login-main">
+    <h1>Sign in</h1>
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('login') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required autofocus></div>
+      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+      <p style="margin-top:1.4rem"><button class="btn" type="submit">Sign in</button></p>
+    </form>
+    <div class="divider"><span>New here?</span></div>
+    <a class="btn ghost wide" href="{{ url_for('register') }}">Create a new account</a>
+    <p class="muted-note">Anyone can create an account. New accounts start with no access to patient data until an administrator assigns a role.</p>
+    {% if users and demo_password %}
+    <section class="accounts">
+      <h2>Demo accounts</h2>
+      <p>Select one to fill the form. Password for all: <span class="mono">{{ demo_password }}</span></p>
+      <ul>
+        {% for u in users %}
+        <li><button type="button" data-user="{{ u.username }}" data-pass="{{ demo_password }}"><span>{{ u.name }}<br><small>{{ u.username }}</small></span><small>{{ u.role }}</small></button></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </main>
+  <script src="{{ url_for('static', filename='js/login.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Only needed for MEDIVAULT_MODE=aws (real AWS services)
+-r requirements.txt
+boto3>=1.34
+pymysql>=1.1

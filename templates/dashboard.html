@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · MediVault</title>
+  <meta name="csrf" content="{{ csrf_token() }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="app">
+<aside class="rail">
+  <a class="brand" href="/" style="color:#fff">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1B5247"/><circle cx="16" cy="13" r="5" fill="#E3A93B"/><path d="M14.2 16.5h3.6l1.2 8h-6z" fill="#E3A93B"/></svg>
+    MediVault
+  </a>
+  <nav id="nav" aria-label="Dashboard sections"></nav>
+  <div class="who">
+    <strong>{{ user.full_name }}</strong>
+    <span>{{ role_label }}</span>
+    <form method="post" action="{{ url_for('logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="link" type="submit">Sign out</button>
+    </form>
+  </div>
+</aside>
+
+<main class="content">
+  <div class="top">
+    <h1 id="title">Overview</h1>
+  </div>
+
+  <section class="view" id="view-overview" hidden>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid wide">
+      <div class="panel"><h2>Admissions per month</h2><p class="hint">Last 12 months</p><div class="chart-line" id="ov-line"></div></div>
+      <div class="panel"><h2>Security services</h2><p class="hint">What is protecting the data right now</p><dl class="facts" id="sys"></dl></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-analytics" hidden>
+    <div class="banner">Analytics use de-identified data only. Groups smaller than <span id="mincell">5</span> people are hidden so nobody can be singled out.</div>
+    <div class="kpis" id="an-kpis"></div>
+    <div class="grid two">
+      <div class="panel"><h2>Admissions per month</h2><p class="hint">Last 12 months</p><div class="chart-line" id="an-line"></div></div>
+      <div class="panel"><h2>Admissions by department</h2><p class="hint">Share of all admissions</p><div id="an-dept"></div></div>
+      <div class="panel"><h2>Most common diagnoses</h2><p class="hint">Top 8</p><div id="an-diag"></div></div>
+      <div class="panel"><h2>Average stay by department</h2><p class="hint">Days, discharged patients</p><div id="an-los"></div></div>
+      <div class="panel"><h2>Patients by age group</h2><p class="hint">Striped bars are hidden small groups</p><div id="an-age"></div></div>
+      <div class="panel"><h2>Patients by gender</h2><p class="hint">&nbsp;</p><div id="an-gender"></div></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-patients" hidden>
+    <div class="panel">
+      <div class="banner" id="pt-banner"></div>
+      <div class="toolbar">
+        <input id="pt-q" type="search" placeholder="Search by MRN, city or gender" aria-label="Search patients">
+        <span class="grow"></span>
+        <button class="btn" id="pt-new" type="button" hidden>Register patient</button>
+      </div>
+      <div class="tbl-wrap"><table class="data"><thead id="pt-head"></thead><tbody id="pt-body"></tbody></table></div>
+      <div class="pager"><button class="btn ghost small" id="pt-prev" type="button">Previous</button><span id="pt-page"></span><button class="btn ghost small" id="pt-next" type="button">Next</button></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-documents" hidden>
+    <div class="grid wide" style="margin-top:0">
+      <div class="panel"><h2>Stored files</h2><p class="hint">Each file is encrypted with its own data key before it reaches S3.</p>
+        <div class="toolbar"><input id="dc-q" placeholder="Filter by patient MRN" aria-label="Filter by MRN"></div>
+        <div class="tbl-wrap"><table class="data"><thead><tr><th>File</th><th>Patient</th><th>Size</th><th>Uploaded</th><th></th></tr></thead><tbody id="dc-body"></tbody></table></div>
+      </div>
+      <div class="panel" id="dc-upload"><h2>Upload a file</h2><p class="hint">PDF, PNG, JPG, TXT or CSV up to 5 MB.</p>
+        <form id="dc-form">
+          <div class="field"><label for="dc-mrn">Patient MRN</label><input id="dc-mrn" name="mrn" placeholder="MV-100000" required></div>
+          <div class="field"><label for="dc-file">File</label><input id="dc-file" name="file" type="file" required></div>
+          <p style="margin-top:1.2rem"><button class="btn" type="submit">Encrypt and upload</button></p>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-access" hidden>
+    <div class="panel"><h2>Permissions by role</h2><p class="hint">Allowed actions are green. Explicit denies are red and beat any allow.</p><div class="tbl-wrap"><table class="data" id="iam-matrix"></table></div></div>
+    <div class="grid two">
+      <div class="panel"><h2>IAM policies</h2><p class="hint">The policy each role would carry in AWS.</p><div id="iam-roles"></div></div>
+      <div class="panel"><h2>Users</h2><p class="hint">Accounts in this platform</p><div class="tbl-wrap"><table class="data"><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last sign-in</th></tr></thead><tbody id="iam-users"></tbody></table></div></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-compliance" hidden>
+    <div class="panel">
+      <div class="score" id="cp-score"></div>
+      <div id="cp-note" class="banner" style="margin-top:1rem" hidden></div>
+    </div>
+    <div class="panel" style="margin-top:1.2rem"><h2>AWS Config rules</h2><div id="cp-rules"></div></div>
+  </section>
+
+  <section class="view" id="view-audit" hidden>
+    <div class="panel">
+      <div class="toolbar">
+        <input id="au-q" type="search" placeholder="Search user, event or resource" aria-label="Search audit log">
+        <select id="au-out" aria-label="Filter by outcome"><option value="">All outcomes</option><option>Success</option><option>Denied</option><option>Failure</option></select>
+        <span class="grow"></span>
+        <button class="btn ghost small" id="au-ct" type="button" hidden>Load real CloudTrail events</button>
+      </div>
+      <div class="tbl-wrap"><table class="data"><thead><tr><th>Time (UTC)</th><th>Event</th><th>User</th><th>Resource</th><th>Outcome</th><th>Details</th></tr></thead><tbody id="au-body"></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg-patient"><div class="dlg-head"><h2 id="dp-title">Patient</h2><button class="btn ghost small" data-close type="button">Close</button></div><div class="dlg-body" id="dp-body"></div></dialog>
+
+<dialog id="dlg-new"><div class="dlg-head"><h2>Register patient</h2><button class="btn ghost small" data-close type="button">Close</button></div>
+  <form class="dlg-body" id="new-form">
+    <div class="field"><label for="n-name">Full name</label><input id="n-name" name="name" required maxlength="80"></div>
+    <div class="form-row">
+      <div class="field"><label for="n-age">Age</label><input id="n-age" name="age" type="number" min="0" max="120" required></div>
+      <div class="field"><label for="n-gender">Gender</label><select id="n-gender" name="gender" required><option value="">Choose</option><option>Female</option><option>Male</option><option>Other</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label for="n-blood">Blood group</label><select id="n-blood" name="blood_group"><option value="">Unknown</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>O+</option><option>O-</option><option>AB+</option><option>AB-</option></select></div>
+      <div class="field"><label for="n-city">City</label><input id="n-city" name="city" maxlength="64"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label for="n-id">National ID number</label><input id="n-id" name="national_id" inputmode="numeric" maxlength="20"></div>
+      <div class="field"><label for="n-phone">Phone</label><input id="n-phone" name="phone" maxlength="20"></div>
+    </div>
+    <div class="field"><label for="n-addr">Address</label><input id="n-addr" name="address" maxlength="200"></div>
+    <div class="field"><label for="n-notes">Clinical notes</label><textarea id="n-notes" name="notes" maxlength="1000"></textarea></div>
+    <p class="hint" style="margin-top:1rem;color:var(--muted);font-size:.9rem">Name, ID, phone, address and notes are encrypted with a new KMS data key before saving.</p>
+    <div class="dlg-foot"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn" type="submit">Encrypt and save</button></div>
+  </form>
+</dialog>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

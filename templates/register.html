@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create an account · MediVault</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="login-page">
+  <aside class="login-side">
+    <a class="brand" href="/" style="color:#fff">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1B5247"/><circle cx="16" cy="13" r="5" fill="#E3A93B"/><path d="M14.2 16.5h3.6l1.2 8h-6z" fill="#E3A93B"/></svg>
+      MediVault
+    </a>
+    <div>
+      <h2>Create your account in under a minute.</h2>
+      <p>New accounts start with no access to patient data. An administrator assigns your role, such as doctor or nurse, after you sign up.</p>
+    </div>
+    <p>Synthetic data only.</p>
+  </aside>
+  <main class="login-main">
+    <h1>Create an account</h1>
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('register') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field"><label for="full_name">Full name</label><input id="full_name" name="full_name" value="{{ form.full_name }}" autocomplete="name" maxlength="80" required autofocus></div>
+      <div class="field"><label for="username">Username</label><input id="username" name="username" value="{{ form.username }}" autocomplete="username" maxlength="32" required><span class="hint-line">3 to 32 characters: lowercase letters, numbers, dot, dash or underscore.</span></div>
+      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required><span class="hint-line">At least 8 characters, with a letter and a number.</span></div>
+      <div class="field"><label for="confirm">Confirm password</label><input id="confirm" name="confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></div>
+      <p style="margin-top:1.4rem"><button class="btn wide" type="submit">Create account</button></p>
+    </form>
+    <p class="muted-note">Already have an account? <a href="{{ url_for('login') }}">Sign in</a></p>
+  </main>
+</body>
+</html>
