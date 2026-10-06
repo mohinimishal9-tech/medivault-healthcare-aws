@@ -18,6 +18,7 @@ from functools import wraps
 
 from flask import (Flask, abort, g, jsonify, redirect, render_template, request, send_file,
                    session, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -27,8 +28,11 @@ from services import Services, iam
 from services.audit import utcnow
 
 app = Flask(__name__)
+# Behind a hosting proxy (Render etc.) use the real visitor IP and https from the proxy headers.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config.update(
     SECRET_KEY=config.SECRET_KEY,
+    SESSION_COOKIE_SECURE=os.environ.get("MEDIVAULT_SECURE_COOKIES") == "1",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     MAX_CONTENT_LENGTH=config.MAX_UPLOAD_MB * 1024 * 1024 + 8192,

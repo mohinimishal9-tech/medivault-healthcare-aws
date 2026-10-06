@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: medivault
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt gunicorn
+    startCommand: gunicorn app:app --workers 1 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: MEDIVAULT_SECURE_COOKIES
+        value: "1"
+      - key: MEDIVAULT_NO_BROWSER
+        value: "1"
+      - key: MEDIVAULT_SECRET_KEY
+        generateValue: true

@@ -1,6 +1,10 @@
 """Creates demo users and a synthetic hospital dataset. Safe to run repeatedly."""
 import datetime as dt
+import os
 import random
+import threading
+import time
+from contextlib import contextmanager
 
 from werkzeug.security import generate_password_hash
 
@@ -53,9 +57,16 @@ def seed_users(svc):
         return
     pw = generate_password_hash(config.DEMO_PASSWORD)
     for username, name, role, mfa in USERS:
-        svc.db.execute(
-            "INSERT INTO users (username, full_name, role, pw_hash, mfa_enabled) VALUES (?,?,?,?,?)",
-            (username, name, role, pw, mfa))
+        if svc.db.one("SELECT id FROM users WHERE username = ?", (username,)):
+            continue
+        try:
+            svc.db.execute(
+                "INSERT INTO users (username, full_name, role, pw_hash, mfa_enabled) VALUES (?,?,?,?,?)",
+                (username, name, role, pw, mfa))
+        except Exception:
+            # Another process inserted the same demo user at the same moment: that is fine.
+            if not svc.db.one("SELECT id FROM users WHERE username = ?", (username,)):
+                raise
     svc.compliance.ensure_defaults()
 
 
@@ -140,8 +151,41 @@ def seed_audit_history(svc):
                       resource, outcome, detail, when=_iso(when))
 
 
+_thread_lock = threading.Lock()
+
+
+@contextmanager
+def _seed_lock(timeout=120):
+    """One seeder at a time, even across processes (hosts may start several copies of the app)."""
+    path = config.DATA_DIR / "seed.lock"
+    deadline = time.time() + timeout
+    while True:
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > 180:  # stale lock from a crashed run
+                    path.unlink()
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                break
+            time.sleep(0.3)
+    try:
+        yield
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
 def seed_all(svc):
-    seed_users(svc)
-    seed_patients(svc)
-    seed_audit_history(svc)
-    svc.compliance.ensure_defaults()
+    with _thread_lock, _seed_lock():
+        seed_users(svc)
+        seed_patients(svc)
+        seed_audit_history(svc)
+        svc.compliance.ensure_defaults()
