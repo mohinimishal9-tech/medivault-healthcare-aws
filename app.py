@@ -2,6 +2,30 @@
 
 Run:  python app.py        then open http://127.0.0.1:5000
 """
+# ---- Streamlit support --------------------------------------------------------------
+# When Streamlit runs this file (Streamlit Cloud, or "streamlit run app.py") it shows the Streamlit
+# version of MediVault from streamlit_app.py. With "python app.py" nothing changes: Flask starts.
+def _running_in_streamlit():
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        try:
+            return get_script_run_ctx(suppress_warning=True) is not None
+        except TypeError:
+            return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
+if _running_in_streamlit():
+    import runpy
+    from pathlib import Path
+
+    import streamlit as st
+
+    runpy.run_path(str(Path(__file__).with_name("streamlit_app.py")), run_name="streamlit_app")
+    st.stop()  # never reach the Flask code below
+# -------------------------------------------------------------------------------------
+
 import datetime as dt
 import hashlib
 import io
